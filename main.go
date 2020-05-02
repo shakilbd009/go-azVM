@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ var (
 	offer        = "UbuntuServer"
 	vnetcidr     = "10.0.0.0/16"
 	subnetcidr   = "10.0.0.0/24"
-	RGname       = "az-nonProd-rg-001"
+	RGname       = "az-nonProd-rg-006"
 	VnetName     = "az-nonProd-vnet-001"
 	subnetName   = "az-nonProd-sub-001"
 	AVsetName    = "az-nonProd-avs-001"
@@ -71,9 +72,18 @@ func main() {
 	go createNSG(ctx, *rg.Name, NSGname, subscription, rdesc, subid, region, int32(priority), ngch)
 	go createNIC(ctx, *rg.Name, nic, subscription, region, <-ngch, subid, nich)
 	go createVM(ctx, *rg.Name, vmname, username, passwd, <-nich, <-avch, region, publisher, offer, sknm, igvs, vmch)
-	fmt.Println(sknm, igvs, <-vmch)
-	end := time.Now().Sub(start).Seconds()
-	fmt.Printf("time took %.2f seconds\n", end)
+	for {
+		time.Sleep(time.Millisecond * 1000)
+		select {
+		case vm := <-vmch:
+			fmt.Println(sknm, igvs, vm)
+			end := time.Now().Sub(start).Seconds()
+			fmt.Printf("time took %.2f seconds\n", end)
+			return
+		default:
+			log.Println("Deploying VM...")
+		}
+	}
 }
 
 func checkRG(ctx context.Context, name, subscription string) autorest.Response {
@@ -200,6 +210,18 @@ func createVM(ctx context.Context, rg, vmname, username, passwd, nic, avsID, reg
 					VMSize: compute.VirtualMachineSizeTypesStandardD2sV3,
 				},
 				StorageProfile: &compute.StorageProfile{
+					DataDisks: &[]compute.DataDisk{
+						{
+							Lun:          to.Int32Ptr(0),
+							Name:         to.StringPtr(vmname + "01"),
+							Caching:      compute.CachingTypesReadWrite,
+							CreateOption: compute.DiskCreateOptionTypesEmpty,
+							DiskSizeGB:   to.Int32Ptr(40),
+							ManagedDisk: &compute.ManagedDiskParameters{
+								StorageAccountType: compute.StorageAccountTypesStandardLRS,
+							},
+						},
+					},
 					ImageReference: &compute.ImageReference{
 						Publisher: to.StringPtr(publisher),
 						Offer:     to.StringPtr(offer),
@@ -228,7 +250,7 @@ func createVM(ctx context.Context, rg, vmname, username, passwd, nic, avsID, reg
 	if err != nil {
 		panic(err)
 	}
-	time.Sleep(time.Second * 50)
+	time.Sleep(time.Second * 60)
 	inter, err := resp.Result(client)
 	if err != nil {
 		panic(err)
