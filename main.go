@@ -23,7 +23,7 @@ var (
 	offer        = "UbuntuServer"
 	vnetcidr     = "10.0.0.0/16"
 	subnetcidr   = "10.0.0.0/24"
-	RGname       = "az-nonProd-rg-006"
+	RGname       = "az-nonProd-rg-003"
 	VnetName     = "az-nonProd-vnet-001"
 	subnetName   = "az-nonProd-sub-001"
 	AVsetName    = "az-nonProd-avs-001"
@@ -56,7 +56,6 @@ func main() {
 	sknm := ""
 	igvs := ""
 	for _, v := range skus[len(skus)-1:] {
-
 		go getVMimages(ctx, region, publisher, offer, *v.Name, imch)
 		sknm = *v.Name
 		igvs = *(*<-imch)[0].Name
@@ -71,7 +70,10 @@ func main() {
 	subid := <-sbch
 	go createNSG(ctx, *rg.Name, NSGname, subscription, rdesc, subid, region, int32(priority), ngch)
 	go createNIC(ctx, *rg.Name, nic, subscription, region, <-ngch, subid, nich)
-	go createVM(ctx, *rg.Name, vmname, username, passwd, <-nich, <-avch, region, publisher, offer, sknm, igvs, vmch)
+	data := []int32{30, 40, 50}
+	datadisk := getDataDisk(data)
+	fmt.Println(len(datadisk), "datadisk len")
+	go createVM(ctx, *rg.Name, vmname, username, passwd, <-nich, <-avch, region, publisher, offer, sknm, igvs, &datadisk, vmch)
 	for {
 		time.Sleep(time.Millisecond * 1000)
 		select {
@@ -84,6 +86,23 @@ func main() {
 			log.Println("Deploying VM...")
 		}
 	}
+}
+
+func getDataDisk(data []int32) []compute.DataDisk {
+	datadisk := make([]compute.DataDisk, 0)
+	for i, v := range data {
+		datadisk = append(datadisk, compute.DataDisk{
+			Lun:          to.Int32Ptr(int32(i)),
+			Name:         to.StringPtr(fmt.Sprintf("%s-0%v", vmname, i)),
+			Caching:      compute.CachingTypesReadWrite,
+			CreateOption: compute.DiskCreateOptionTypesEmpty,
+			DiskSizeGB:   to.Int32Ptr(v),
+			ManagedDisk: &compute.ManagedDiskParameters{
+				StorageAccountType: compute.StorageAccountTypesStandardLRS,
+			},
+		})
+	}
+	return datadisk
 }
 
 func checkRG(ctx context.Context, name, subscription string) autorest.Response {
@@ -197,7 +216,7 @@ func createVnet(ctx context.Context, rg, vname, region, cidr, sname, subcidr str
 
 }
 
-func createVM(ctx context.Context, rg, vmname, username, passwd, nic, avsID, region, publisher, offer, sku, version string, ch chan string) {
+func createVM(ctx context.Context, rg, vmname, username, passwd, nic, avsID, region, publisher, offer, sku, version string, datadisk *[]compute.DataDisk, ch chan string) {
 	client := vmClient()
 	defer errRecover()
 	resp, err := client.CreateOrUpdate(ctx,
@@ -210,18 +229,7 @@ func createVM(ctx context.Context, rg, vmname, username, passwd, nic, avsID, reg
 					VMSize: compute.VirtualMachineSizeTypesStandardD2sV3,
 				},
 				StorageProfile: &compute.StorageProfile{
-					DataDisks: &[]compute.DataDisk{
-						{
-							Lun:          to.Int32Ptr(0),
-							Name:         to.StringPtr(vmname + "01"),
-							Caching:      compute.CachingTypesReadWrite,
-							CreateOption: compute.DiskCreateOptionTypesEmpty,
-							DiskSizeGB:   to.Int32Ptr(40),
-							ManagedDisk: &compute.ManagedDiskParameters{
-								StorageAccountType: compute.StorageAccountTypesStandardLRS,
-							},
-						},
-					},
+					DataDisks: datadisk,
 					ImageReference: &compute.ImageReference{
 						Publisher: to.StringPtr(publisher),
 						Offer:     to.StringPtr(offer),
@@ -250,7 +258,7 @@ func createVM(ctx context.Context, rg, vmname, username, passwd, nic, avsID, reg
 	if err != nil {
 		panic(err)
 	}
-	time.Sleep(time.Second * 60)
+	time.Sleep(time.Second * 90)
 	inter, err := resp.Result(client)
 	if err != nil {
 		panic(err)
